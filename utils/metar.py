@@ -1324,7 +1324,7 @@ def setDisplayPage(display, metar, ledobject, crosswind_limit, icao, currentpage
                 display.set_row(4, "   {}".format(items[1][1]))
             fb = getFrameBufferForWeather(items[1], "None")
             if fb is not None:
-                display.add_bitmap("wx1", fb, x=4, y=45, layer="bg")
+                display.add_bitmap("wx1", fb, x=4, y=43, layer="bg")
     else:
         page_i = currentpage - fixed_pages - wx_pages
         start = page_i * 2

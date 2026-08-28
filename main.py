@@ -291,6 +291,7 @@ try:
                 print(metar)
                 if metar is not None:
                     last_metar = now
+                    display.show_message(*["Binary Aviation", "RunwaySense", "", "Fetching", "New METAR", "Data"])
                     if DISPLAY_MODE == "Static":
                         setDisplay(display, metar, led_weather, crosswind_limit=system_cfg.get("WEATHER_LED_CROSSWIND_LIMIT", 5))
                     if DISPLAY_MODE == "Cycle":
