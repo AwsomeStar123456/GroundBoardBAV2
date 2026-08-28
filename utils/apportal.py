@@ -153,20 +153,48 @@ HTML_SAVED = """\
 </div></div></body></html>
 """
 
-HTML_UPDATE = """\
+HTML_UPDATE_CONFIRM = """\
 <!DOCTYPE html>
 <html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Update</title>
+<title>Confirm Update</title>
 <style>
   body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:#eef2f6; margin:0; }
   .wrap { max-width:460px; margin:40px auto; padding:0 14px; }
   .card { background:#fff; border-radius:12px; padding:22px; box-shadow:0 1px 4px rgba(15,23,42,.08); }
-  a { display:block; margin-top:16px; text-align:center; background:#6e7781; color:#fff; text-decoration:none; padding:11px; border-radius:8px; font-weight:700; }
+  h2 { text-align:center; margin-top:0; }
+  p { color:#334155; }
+  .hint { color:#5b677a; font-size:.9rem; }
+  .btns { display:flex; gap:10px; margin-top:16px; }
+  input[type=submit] { flex:1; padding:11px; border:0; border-radius:8px; color:#fff; font-weight:700; font:inherit; }
+  input[type=submit][value="Cancel"] { background:#6e7781; }
+  input[type=submit][value="Confirm Update"] { background:#2da44e; }
 </style></head>
 <body><div class="wrap"><div class="card">
   <h2>Update Software</h2>
-  <p>OTA software update is not enabled in this build. This button is reserved for a later release.</p>
-  <a href="/">Back to settings</a>
+  <p>Download the latest files listed in <span style="font-family:ui-monospace,monospace">update_manifest.json</span> from GitHub.</p>
+  <p class="hint">Keep the unit powered on. Settings in config.json are not overwritten.</p>
+  <form method="POST" action="/">
+    <div class="btns">
+      <input type="submit" name="action" value="Cancel">
+      <input type="submit" name="action" value="Confirm Update">
+    </div>
+  </form>
+</div></div></body></html>
+"""
+
+HTML_UPDATE = """\
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Updating</title>
+<style>
+  body { font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; background:#eef2f6; margin:0; }
+  .wrap { max-width:460px; margin:40px auto; padding:0 14px; }
+  .card { background:#fff; border-radius:12px; padding:22px; text-align:center; box-shadow:0 1px 4px rgba(15,23,42,.08); }
+</style></head>
+<body><div class="wrap"><div class="card">
+  <h2>Update Mode</h2>
+  <p>The board will reboot and download the latest software from GitHub.</p>
+  <p>Keep power connected.</p>
 </div></div></body></html>
 """
 
@@ -526,9 +554,25 @@ def run_ap_portal(cfg, display=None, leds=None, version="2.0.0.1", should_exit=N
                         break
 
                     if action in ("Update", "Update Software"):
-                        _send(cl, HTML_HEADER + HTML_UPDATE)
+                        _send(cl, HTML_HEADER + HTML_UPDATE_CONFIRM)
                         cl.close()
                         continue
+
+                    if action == "Cancel":
+                        _send(cl, _render_settings(cfg, version, form=params))
+                        cl.close()
+                        continue
+
+                    if action == "Confirm Update":
+                        try:
+                            cfg.set("UPDATE_MODE", True)
+                        except Exception as e:
+                            print("Failed to set UPDATE_MODE:", e)
+                        _send(cl, HTML_HEADER + HTML_UPDATE)
+                        result = "update"
+                        cl.close()
+                        time.sleep(1)
+                        break
 
                     if action == "Scan":
                         if display is not None:

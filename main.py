@@ -8,6 +8,7 @@ from utils.airportwifi import AirportWiFi
 from utils.metar import setDisplay, setDisplayPage
 from utils.led import PINK
 from utils.apportal import run_ap_portal
+import updates
 try:
     import machine
 except ImportError:
@@ -20,7 +21,7 @@ micropython.mem_info()
 """
 This section initalizes all global variables.
 """
-software_version = "2.0.0.1"
+software_version = "2.0.0.4"
 sync_handled = True
 ap_requested = False
 ap_exit_requested = False
@@ -104,8 +105,11 @@ def enter_ap_mode():
     in_ap_mode = False
     ap_exit_requested = False
 
-    if result == "saved":
-        display.show_message(*["Binary Aviation", "RunwaySense", "Settings", "Saved", "Rebooting", ""])
+    if result in ("saved", "update"):
+        if result == "update":
+            display.show_message(*["Update Mode", "Rebooting", "Keep Power", "Connected", "", ""])
+        else:
+            display.show_message(*["Binary Aviation", "RunwaySense", "Settings", "Saved", "Rebooting", ""])
         sleep(2)
         if machine is not None:
             try:
@@ -149,6 +153,72 @@ display.show_message(*["Binary Aviation", "RunwaySense", "", "", "LEDs", "Initia
 sleep(1)
 display.clear()
 sleep(1)
+
+# ----- GitHub update mode (set from AP "Update Software") -----
+if system_cfg.get("UPDATE_MODE"):
+    print("Update Mode Enabled")
+    display.show_message(*["Update Mode", "Starting", "Please Do Not", "Turn Off", "Power", ""])
+    try:
+        led_weather.fill((255, 255, 255))
+    except Exception:
+        pass
+    sleep(2)
+
+    update_wifi = AirportWiFi()
+
+    def _update_connect():
+        ok = update_wifi.connect(
+            system_cfg.get("WIFI_SSID"),
+            system_cfg.get("WIFI_PASSWORD"),
+            timeout=system_cfg.get("WIFI_TIMEOUT"),
+            display=display,
+        )
+        return bool(ok)
+
+    def _update_progress(i, total, path):
+        name = path.split("/")[-1] if path else ""
+        display.show_message(*[
+            "Update Mode",
+            "{}/{}".format(i, total),
+            name,
+            "Please Do Not",
+            "Turn Off",
+            "Power",
+        ])
+
+    ok, info = updates.run_update(
+        cfg=system_cfg,
+        connect_fn=_update_connect,
+        progress_fn=_update_progress,
+    )
+    try:
+        system_cfg.set("UPDATE_MODE", False)
+    except Exception:
+        pass
+
+    if ok:
+        display.show_message(*["Update Mode", "Success", "Unit", "Restarting", "", ""])
+        sleep(3)
+        if machine is not None:
+            try:
+                machine.reset()
+            except Exception:
+                pass
+    else:
+        print("Update failed:", info)
+        reason = ""
+        try:
+            reason = str(info.get("reason") if isinstance(info, dict) else info)
+        except Exception:
+            reason = "failed"
+        if isinstance(info, dict) and info.get("failed"):
+            try:
+                reason = str(info["failed"][0].get("error") or reason)
+            except Exception:
+                pass
+        display.show_message(*["Update Mode", "Failed", "Turn Unit", "Off / On", "Error", reason[:16]])
+        while True:
+            sleep(5)
 
 #SW Version
 display.show_message(*["Binary Aviation", "RunwaySense", "", "", "Initalization", "Complete"])
@@ -215,7 +285,7 @@ while True:
             print("Refreshing METAR data...")
             display.clear()
             metar = wifi.get_metar(icao=system_cfg.get("METAR_STATION_ID"))
-            metar = "KJFK 252155Z 28018G30KT 1 1/2SM +TSRA BR BKN012CB OVC025 18/16 A2975 RMK AO2 TSB45"
+            #metar = "KJFK 252155Z 28018G30KT 1 1/2SM +TSRA BR BKN012CB OVC025 18/16 A2975 RMK AO2 TSB45"
             print(metar)
             if metar is not None:
                 last_metar = now

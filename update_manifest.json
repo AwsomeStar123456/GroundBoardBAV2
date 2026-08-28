@@ -1,0 +1,17 @@
+[
+  "main.py",
+  "updates.py",
+  "update_manifest.json",
+  "lib/__init__.py",
+  "lib/ssd1309.mpy",
+  "lib/xglcd_font.py",
+  "utils/__init__.py",
+  "utils/airportwifi.py",
+  "utils/apportal.py",
+  "utils/button.py",
+  "utils/config.py",
+  "utils/i2cdisplay.py",
+  "utils/led.py",
+  "utils/metar.py",
+  "utils/wifi.py"
+]
