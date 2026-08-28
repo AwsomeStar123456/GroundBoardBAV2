@@ -216,8 +216,6 @@ class WeatherLights:
         Recolour every LED based on wind relative to its assigned heading.
         Returns list of (heading, headwind, crosswind) for each LED.
         """
-        wind_dir=(wind_dir + 180) % 360
-
         results = []
         factor = self.strip.brightness / 100.0
         for i, hdg in enumerate(self.headings):

@@ -68,30 +68,16 @@ def _parse_wind_from_raw(raw):
     # Examples: 20013KT  20013G26KT  VRB04KT  VRB04G12KT  00000KT
     tokens = raw.split()
     wind_token = None
-    unit_div = 1.0
     for t in tokens:
         if t.endswith("KT") and len(t) >= 5:
             wind_token = t
-            unit_div = 1.0
-            break
-        if t.endswith("MPS") and len(t) >= 6:
-            wind_token = t
-            unit_div = 1.0 / 0.514444  # m/s -> kt
-            break
-        if t.endswith("KMH") and len(t) >= 6:
-            wind_token = t
-            unit_div = 1.0 / 1.852  # km/h -> kt
             break
 
     if not wind_token:
         return None, None, None, True, True
 
-    if wind_token.endswith("KT"):
-        core = wind_token[:-2]
-    elif wind_token.endswith("MPS") or wind_token.endswith("KMH"):
-        core = wind_token[:-3]
-    else:
-        core = wind_token
+    # Remove the KT
+    core = wind_token[:-2]
 
     is_variable = False
     wind_dir = None
@@ -119,11 +105,6 @@ def _parse_wind_from_raw(raw):
             gust = _safe_float(parts[1])
     else:
         speed = _safe_float(core)
-
-    if speed is not None:
-        speed = speed * unit_div
-    if gust is not None:
-        gust = gust * unit_div
 
     is_calm = (speed is None) or (speed <= 0)
 
@@ -261,8 +242,8 @@ def decode_metar_vis_alt(metar):
                 vis = t
             break
 
-        # ICAO visibility in meters: 4 digits (skip RVR like R36/4000)
-        if len(t) == 4 and t.isdigit() and not t.startswith("R"):
+        # ICAO visibility in meters: 4 digits
+        if len(t) == 4 and t.isdigit():
             vis = t
             break
 
@@ -281,30 +262,24 @@ def parse_vis_alt(vis, alt):
     alt_val = None
     alt_unit = None
 
-    try:
-        if vis == "CAVOK":
-            vis_val = 10.0
-            vis_unit = "SM"
-        elif vis and vis.endswith("SM"):
-            s = vis[:-2].replace("P", "").replace("M", "")
-            if " " in s:
-                whole, frac = s.split()
-                num, den = frac.split("/")
-                den_f = float(den) if den else 1.0
-                vis_val = int(whole) + (float(num) / den_f if den_f else 0)
-            elif "/" in s:
-                num, den = s.split("/")
-                den_f = float(den) if den else 1.0
-                vis_val = float(num) / den_f if den_f else 0
-            elif s.replace(".", "", 1).isdigit():
-                vis_val = float(s)
-            vis_unit = "SM"
-        elif vis and vis.isdigit() and len(vis) == 4:
-            vis_val = int(vis)
-            vis_unit = "M"
-    except Exception:
-        vis_val = None
-        vis_unit = None
+    if vis == "CAVOK":
+        vis_val = 10.0
+        vis_unit = "SM"          # treat as 10SM+
+    elif vis and vis.endswith("SM"):
+        s = vis[:-2].replace("P", "").replace("M", "")  # P6SM / M1/4SM
+        if " " in s:             # 1 1/2
+            whole, frac = s.split()
+            num, den = frac.split("/")
+            vis_val = int(whole) + float(num) / float(den)
+        elif "/" in s:           # 3/4
+            num, den = s.split("/")
+            vis_val = float(num) / float(den)
+        elif s.isdigit():
+            vis_val = float(s)
+        vis_unit = "SM"
+    elif vis and vis.isdigit() and len(vis) == 4:
+        vis_val = int(vis)
+        vis_unit = "M"
 
     if alt and alt[0] == "A" and alt[1:].isdigit():
         alt_val = int(alt[1:]) / 100.0     # A3012 -> 30.12
@@ -727,30 +702,16 @@ def decode_wind(metar):
     tokens = metar.upper().split()
 
     wind_token = None
-    unit_div = 1.0
     for t in tokens:
         if t.endswith("KT") and len(t) >= 5:
             wind_token = t
-            unit_div = 1.0
-            break
-        if t.endswith("MPS") and len(t) >= 6:
-            wind_token = t
-            unit_div = 1.0 / 0.514444
-            break
-        if t.endswith("KMH") and len(t) >= 6:
-            wind_token = t
-            unit_div = 1.0 / 1.852
             break
 
     if not wind_token:
         return [0, 0, 0]
 
-    if wind_token.endswith("KT"):
-        core = wind_token[:-2]
-    elif wind_token.endswith("MPS") or wind_token.endswith("KMH"):
-        core = wind_token[:-3]
-    else:
-        core = wind_token
+    # Strip "KT"
+    core = wind_token[:-2]
 
     # ----- Variable or direction -----
     if core.startswith("VRB"):
@@ -759,8 +720,6 @@ def decode_wind(metar):
     else:
         if len(core) >= 5 and core[:3].isdigit():
             direction = int(core[:3]) % 360
-            if direction == 0:
-                direction = 360
             core = core[3:]
         else:
             # malformed – treat as calm
@@ -782,13 +741,6 @@ def decode_wind(metar):
             speed = int(core)
         except:
             speed = 0
-        gust = 0
-
-    try:
-        speed = int(speed * unit_div + 0.5)
-        gust = int(gust * unit_div + 0.5) if gust else 0
-    except Exception:
-        speed = 0
         gust = 0
 
     # Calm
@@ -914,11 +866,7 @@ def ceiling_from_layers(layers):
 
     ceiling = None
 
-    for item in layers:
-        try:
-            coverage, height = item[0], item[1]
-        except Exception:
-            continue
+    for coverage, height in layers:
         if coverage in ("Broken", "Overcast") and height is not None:
             if ceiling is None or height < ceiling[1]:
                 ceiling = [coverage, height]
@@ -965,7 +913,7 @@ def decode_metar_temp_dew(metar):
         if temp is not None and dew is not None:
             return temp, dew
 
-    return None, None
+    return 0, 0
 
 def weather_info_list(metar):
     """
@@ -1088,15 +1036,10 @@ def weather_info_list(metar):
 
         return [intensity, name]
 
-    body = _strip_rmk(metar).upper().replace("=", "")
-    tokens = body.split()
+    body = metar.upper().split(" RMK")[0]
+    tokens = body.replace("=", "").split()
     out = []
     for t in tokens:
-        # RVR / runway groups look a bit like weather (R36/4000FT)
-        if t.startswith("R") and "/" in t:
-            continue
-        if t.startswith("WS"):
-            continue
         if is_wx_token(t):
             out.append(parse_token(t))
     return out
@@ -1115,10 +1058,7 @@ def flight_category(vis_sm, ceiling_ft):
     ceiling_ft int feet, or None for unlimited
     """
     ceil = 99999 if ceiling_ft is None else ceiling_ft
-    try:
-        vis = 99.0 if vis_sm is None else float(vis_sm)
-    except Exception:
-        vis = 99.0
+    vis = 99.0 if vis_sm is None else float(vis_sm)
 
     if ceil < 500 or vis < 1.0:
         return "LIFR"
@@ -1133,18 +1073,7 @@ def setDisplay(display, metar, ledobject, crosswind_limit):
     """
     Updates the I2C display with METAR info.
     """
-    try:
-        _setDisplay(display, metar, ledobject, crosswind_limit)
-    except Exception as e:
-        print("setDisplay error:", e)
-        try:
-            from utils.fault import show_error, exception_lines
-            n, m = exception_lines(e)
-            show_error(display, ledobject, "METAR Error", n, m)
-        except Exception:
-            pass
 
-def _setDisplay(display, metar, ledobject, crosswind_limit):
     # Clear previous content
     display.clear()
 
@@ -1224,19 +1153,6 @@ def setDisplayPage(display, metar, ledobject, crosswind_limit, icao, currentpage
     Updates the I2C display with METAR info.
     Returns the next page index, or 0 after the last dynamic page.
     """
-    try:
-        return _setDisplayPage(display, metar, ledobject, crosswind_limit, icao, currentpage)
-    except Exception as e:
-        print("setDisplayPage error:", e)
-        try:
-            from utils.fault import show_error, exception_lines
-            n, m = exception_lines(e)
-            show_error(display, ledobject, "Display Error", n, m)
-        except Exception:
-            pass
-        return 0
-
-def _setDisplayPage(display, metar, ledobject, crosswind_limit, icao, currentpage):
     display.clear()
 
     wx_list = weather_info_list(metar)
@@ -1352,24 +1268,13 @@ def _setDisplayPage(display, metar, ledobject, crosswind_limit, icao, currentpag
         vis, alt = decode_metar_vis_alt(metar)
         vis_val, vis_unit, alt_val, alt_unit = parse_vis_alt(vis, alt)
         ceiling = ceiling_from_layers(cloud_info_list(metar))
-        vis_sm = vis_val
-        if vis_unit == "M" and vis_val is not None:
-            vis_sm = vis_val / 1609.34
-        elif vis_unit != "SM":
-            vis_sm = None
-        cat = flight_category(vis_sm, ceiling[1])
+        cat = flight_category(vis_val if vis_unit == "SM" else None, ceiling[1])
 
         display.set_row(0, "Visibility")
-        if vis_val is None:
-            display.set_row(1, "--")
-        else:
-            display.set_row(1, "{} {}".format(vis_val, vis_unit or ""))
+        display.set_row(1, "{} {}".format(vis_val, vis_unit))
         display.add_separator(after_row=1)
         display.set_row(2, "Altimeter")
-        if alt_val is None:
-            display.set_row(3, "--")
-        else:
-            display.set_row(3, "{} {}".format(alt_val, alt_unit or ""))
+        display.set_row(3, "{} {}".format(alt_val, alt_unit))
         display.add_separator(after_row=3)
         display.set_row(4, "Flight Category")
         display.set_row(5, "{}".format(cat))
