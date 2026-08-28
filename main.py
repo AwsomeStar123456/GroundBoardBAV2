@@ -313,7 +313,7 @@ while True:
                         display_index = 0
                 else:
                     wifi_status = False
-                    #show_error(display, led_weather, "METAR Error", "Bad report", "Retry later")
+                    show_error(display, led_weather, "METAR Error", "Bad report", "Retry later")
 
         if (time.ticks_diff(now, last_display_update) >= DISPLAY_INTERVAL_S * 1000 and metar != None and DISPLAY_MODE == "Cycle"):
             print("Changing display data current index: " + str(display_index))
