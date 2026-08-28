@@ -13,5 +13,6 @@
   "utils/i2cdisplay.py",
   "utils/led.py",
   "utils/metar.py",
-  "utils/wifi.py"
+  "utils/wifi.py",
+  "utils/fault.py"
 ]
