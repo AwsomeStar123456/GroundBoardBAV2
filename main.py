@@ -75,7 +75,7 @@ def _ap_should_exit():
 
 def enter_ap_mode():
     global ap_requested, ap_exit_requested, in_ap_mode, wifi, wifi_status
-    global METAR_INTERVAL_S, DISPLAY_MODE, last_metar, last_display_update, display_index
+    global METAR_INTERVAL_S, DISPLAY_INTERVAL_S, DISPLAY_MODE, last_metar, last_display_update, display_index
 
     ap_requested = False
     ap_exit_requested = False
@@ -120,6 +120,7 @@ def enter_ap_mode():
     # Left AP without reboot — reload settings and go back to STA.
     system_cfg.load()
     METAR_INTERVAL_S = system_cfg.get("METAR_INTERVAL_S", 60)
+    DISPLAY_INTERVAL_S = system_cfg.get("DISPLAY_INTERVAL_S", 10)
     DISPLAY_MODE = system_cfg.get("DISPLAY_MODE", "Cycle")
     try:
         led_weather.set_brightness(system_cfg.get("WEATHER_LED_BRIGHTNESS", 5))
@@ -285,6 +286,7 @@ try:
             print("Checking METAR data...")
             if (wifi_status):
                 print("Refreshing METAR data...")
+                gc.collect()
                 display.clear()
                 metar = wifi.get_metar(icao=system_cfg.get("METAR_STATION_ID"))
                 #metar = "KJFK 252155Z 28018G30KT 1 1/2SM +TSRA BR BKN012CB OVC025 18/16 A2975 RMK AO2 TSB45"

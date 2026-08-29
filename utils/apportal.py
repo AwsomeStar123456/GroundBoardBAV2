@@ -92,13 +92,18 @@ HTML_PAGE = """\
             <input type="number" name="crosswind_threshold" min="0" max="50" step="1" value="__CROSSWIND_THRESHOLD__">
           </label>
         </div>
-        <label>Display Mode
-          <select name="display_mode">
-            <option value="Cycle" __DISPLAY_MODE_CYCLE__>Cycle</option>
-            <option value="Static" __DISPLAY_MODE_STATIC__>Static</option>
-          </select>
-        </label>
-        <p class="hint">Cycle rotates METAR pages. Static keeps the summary screen.</p>
+        <div class="row">
+          <label>Display Mode
+            <select name="display_mode">
+              <option value="Cycle" __DISPLAY_MODE_CYCLE__>Cycle</option>
+              <option value="Static" __DISPLAY_MODE_STATIC__>Static</option>
+            </select>
+          </label>
+          <label>Cycle Interval (s)
+            <input type="number" name="display_interval" min="2" max="120" step="1" value="__DISPLAY_INTERVAL__">
+          </label>
+        </div>
+        <p class="hint">Cycle rotates METAR pages every Cycle Interval seconds. Static keeps the summary screen.</p>
 
         <h2 style="margin-top:22px">Wi-Fi</h2>
         <div class="ssidrow">
@@ -410,6 +415,7 @@ def _render_settings(cfg, version, banner="", form=None, ssids=None):
     html = html.replace("__PASSWORD__", "")
     html = html.replace("__WIFI_TIMEOUT__", field("wifi_timeout", cfg.get("WIFI_TIMEOUT", 30)))
     html = html.replace("__METAR_INTERVAL__", field("metar_interval", cfg.get("METAR_INTERVAL_S", 300)))
+    html = html.replace("__DISPLAY_INTERVAL__", field("display_interval", cfg.get("DISPLAY_INTERVAL_S", 10)))
     html = html.replace("__SCAN_RESULTS_BLOCK__", scan_block)
     return HTML_HEADER + html
 
@@ -601,6 +607,9 @@ def run_ap_portal(cfg, display=None, leds=None, version="2.0.0.1", should_exit=N
                         ),
                         "METAR_INTERVAL_S": _parse_int(
                             params.get("metar_interval"), 60, 3600, cfg.get("METAR_INTERVAL_S", 300)
+                        ),
+                        "DISPLAY_INTERVAL_S": _parse_int(
+                            params.get("display_interval"), 2, 120, cfg.get("DISPLAY_INTERVAL_S", 10)
                         ),
                     }
                     ssid = (params.get("ssid") or "").strip()
