@@ -1254,7 +1254,7 @@ def setDisplayPage(display, metar, ledobject, crosswind_limit, icao, currentpage
                 if(cloudinfo[1] is not None):
                     display.set_row(5, f"   {cloudinfo[1]} ft")
 
-            display.add_bitmap("ceiling", getFrameBufferForWeather(phenomenainfo, cloudinfo), x=4, y=44, layer="bg")
+            display.add_bitmap("ceiling", getFrameBufferForWeather(phenomenainfo, cloudinfo), x=4, y=42, layer="bg")
 
         else:
             display.set_row(3, "Current Ceiling")
@@ -1262,7 +1262,7 @@ def setDisplayPage(display, metar, ledobject, crosswind_limit, icao, currentpage
             display.set_row(5, "   {} ft".format(ceiling[1]))
             ceiling_fb = getFrameBufferForWeather("None", ceiling)
             if ceiling_fb is not None:
-                display.add_bitmap("ceiling", ceiling_fb, x=4, y=44, layer="bg")
+                display.add_bitmap("ceiling", ceiling_fb, x=4, y=42, layer="bg")
 
     elif currentpage == 2:
         vis, alt = decode_metar_vis_alt(metar)
