@@ -6,7 +6,7 @@ from utils.i2cdisplay import I2CDisplay
 from utils.led import WeatherLights
 from utils.airportwifi import AirportWiFi
 from utils.metar import setDisplay, setDisplayPage
-from utils.led import PINK
+from utils.led import PINK, BLUE, RED
 from utils.apportal import run_ap_portal
 import updates
 try:
@@ -21,7 +21,7 @@ micropython.mem_info()
 """
 This section initalizes all global variables.
 """
-software_version = "2.0.0.4"
+software_version = "2.0.0.5"
 sync_handled = True
 ap_requested = False
 ap_exit_requested = False
@@ -76,6 +76,7 @@ def _ap_should_exit():
 def enter_ap_mode():
     global ap_requested, ap_exit_requested, in_ap_mode, wifi, wifi_status
     global METAR_INTERVAL_S, DISPLAY_INTERVAL_S, DISPLAY_MODE, last_metar, last_display_update, display_index
+    global metar_fail_count, last_wifi_attempt, wifi_backoff_s, wifi_fault
 
     ap_requested = False
     ap_exit_requested = False
@@ -131,6 +132,10 @@ def enter_ap_mode():
     last_metar = 0
     last_display_update = 0
     display_index = 0
+    metar_fail_count = 0
+    last_wifi_attempt = 0
+    wifi_backoff_s = 5
+    wifi_fault = None
     display.show_message(*["Binary Aviation", "RunwaySense", "Leaving", "AP Mode", "Reconnecting", "WiFi"])
     sleep(1)
 
@@ -245,10 +250,52 @@ last_display_update = 0
 display_index = 0
 metar= None
 wifi_status = False
+metar_fail_count = 0
+last_wifi_attempt = 0
+wifi_backoff_s = 5
+wifi_fault = None
+METAR_FAILS_BEFORE_RECONNECT = 3
+WIFI_BACKOFF_MAX_S = 60
 
 gc.collect()
 print("=== After Setup Entering Main Loop ===")
 micropython.mem_info()
+
+def show_wifi_fault(kind, line3, line4, line5, line6):
+    global wifi_fault
+    if wifi_fault == kind:
+        return
+    wifi_fault = kind
+    try:
+        display.show_message(*["Binary Aviation", "RunwaySense", line3, line4, line5, line6])
+    except Exception:
+        pass
+    try:
+        led_weather.fill(BLUE)
+    except Exception:
+        pass
+
+
+def attempt_wifi(force=False):
+    global wifi_status, last_wifi_attempt, wifi_backoff_s, wifi_fault
+    last_wifi_attempt = time.ticks_ms()
+    ok = wifi.connect(
+        system_cfg.get("WIFI_SSID"),
+        system_cfg.get("WIFI_PASSWORD"),
+        timeout=system_cfg.get("WIFI_TIMEOUT"),
+        display=display,
+        reset_radio=force or (not wifi.is_connected()),
+    )
+    if wifi.is_connected():
+        wifi_backoff_s = 5
+        wifi_status = True
+        wifi_fault = None
+        return True
+    wifi_status = False
+    wifi_backoff_s = min(int(wifi_backoff_s * 2), WIFI_BACKOFF_MAX_S)
+    print("WiFi retry backoff now {}s".format(wifi_backoff_s))
+    return False
+
 
 try:
     
@@ -256,51 +303,68 @@ try:
         now = time.ticks_ms()
 
         # ----- WiFi keep-alive -----
-        if(wifi.is_connected() is False):
-            wifi.connect(
-                system_cfg.get("WIFI_SSID"),
-                system_cfg.get("WIFI_PASSWORD"),
-                timeout=system_cfg.get("WIFI_TIMEOUT"),
-                display=display,
-            )
-
-            if(wifi.is_connected() is False):
-                display.clear()
-                display.show_message(*["Binary Aviation", "RunwaySense", f"{system_cfg.get("WIFI_SSID")}", "Not Connected", "to AP", "Check Router"])
-                led_weather.strip.fill((0, 0, 255))
-                led_weather.strip.show()
-                sleep(5)
-
-        if(wifi.is_connected() and wifi_status is False):
-            wifi_status=wifi.check_connection()
-
-            if(wifi_status is False):
-                display.clear()
-                display.show_message(*["Binary Aviation", "RunwaySense", f"{system_cfg.get("WIFI_SSID")}", "Not Connected", "to Internet", "Check Router"])
-                led_weather.strip.fill((0, 0, 255))
-                led_weather.strip.show()
-                sleep(5)
+        if wifi.is_connected() is False:
+            wifi_status = False
+            due = (last_wifi_attempt == 0 or
+                   time.ticks_diff(now, last_wifi_attempt) >= wifi_backoff_s * 1000)
+            if due:
+                attempt_wifi(force=True)
+            if wifi.is_connected() is False:
+                show_wifi_fault(
+                    "ap",
+                    "{}".format(system_cfg.get("WIFI_SSID")),
+                    "Not on WiFi",
+                    "Retry {}s".format(wifi_backoff_s),
+                    "Check Router",
+                )
 
         # ----- METAR (own interval) -----
-        if (time.ticks_diff(now, last_metar) >= METAR_INTERVAL_S * 1000 or last_metar == 0):
-            print("Checking METAR data...")
-            if (wifi_status):
-                print("Refreshing METAR data...")
-                gc.collect()
-                display.clear()
-                metar = wifi.get_metar(icao=system_cfg.get("METAR_STATION_ID"))
-                #metar = "KJFK 252155Z 28018G30KT 1 1/2SM +TSRA BR BKN012CB OVC025 18/16 A2975 RMK AO2 TSB45"
-                print(metar)
-                if metar is not None:
-                    last_metar = now
-                    display.show_message(*["Binary Aviation", "RunwaySense", "", "Fetching", "New METAR", "Data"])
-                    if DISPLAY_MODE == "Static":
-                        setDisplay(display, metar, led_weather, crosswind_limit=system_cfg.get("WEATHER_LED_CROSSWIND_LIMIT", 5))
-                    if DISPLAY_MODE == "Cycle":
-                        last_display_update = now
-                        display_index = 0
+        # Fetch whenever associated. Do not require NTP / wifi_status first.
+        if wifi.is_connected() and (time.ticks_diff(now, last_metar) >= METAR_INTERVAL_S * 1000 or last_metar == 0):
+            print("Refreshing METAR data...")
+            gc.collect()
+            fresh = wifi.get_metar(icao=system_cfg.get("METAR_STATION_ID"))
+            #fresh = "KJFK 252155Z 28018G30KT 1 1/2SM +TSRA BR BKN012CB OVC025 18/16 A2975 RMK AO2 TSB45"
+            print(fresh)
+            if fresh is not None:
+                metar = fresh
+                last_metar = now
+                metar_fail_count = 0
+                wifi_status = True
+                wifi_backoff_s = 5
+                wifi_fault = None
+                display.show_message(*["Binary Aviation", "RunwaySense", "", "Fetching", "New METAR", "Data"])
+                if DISPLAY_MODE == "Static":
+                    setDisplay(display, metar, led_weather, crosswind_limit=system_cfg.get("WEATHER_LED_CROSSWIND_LIMIT", 5))
+                if DISPLAY_MODE == "Cycle":
+                    last_display_update = now
+                    display_index = 0
+            else:
+                metar_fail_count += 1
+                print("METAR fetch failed ({}/{})".format(metar_fail_count, METAR_FAILS_BEFORE_RECONNECT))
+                # Keep last good METAR on the display. Only go blue if we have none.
+                if metar is None:
+                    show_wifi_fault(
+                        "metar",
+                        "{}".format(system_cfg.get("METAR_STATION_ID")),
+                        "METAR Failed",
+                        "Attempt {}".format(metar_fail_count),
+                        "Retrying",
+                    )
+                    retry_s = 30 if METAR_INTERVAL_S > 30 else METAR_INTERVAL_S
+                    last_metar = now - (METAR_INTERVAL_S - retry_s) * 1000
                 else:
-                    wifi_status=False
+                    last_metar = now
+                if metar_fail_count >= METAR_FAILS_BEFORE_RECONNECT:
+                    print("METAR failed repeatedly — forcing WiFi reconnect")
+                    metar_fail_count = 0
+                    wifi_status = False
+                    try:
+                        wifi.disconnect()
+                    except Exception:
+                        pass
+                    sleep(1)
+                    attempt_wifi(force=True)
 
         if (time.ticks_diff(now, last_display_update) >= DISPLAY_INTERVAL_S * 1000 and metar != None and DISPLAY_MODE == "Cycle"):
             print("Changing display data current index: " + str(display_index))
@@ -314,6 +378,8 @@ try:
             last_metar = 0
             last_display_update = 0
             display_index = 0
+            metar_fail_count = 0
+            wifi_fault = None
 
         if ap_requested:
             enter_ap_mode()
@@ -322,6 +388,8 @@ try:
 
 except Exception as e:
     print("Error in main loop:", e)
-    led_weather.strip.fill((255, 0, 0))
-    led_weather.strip.show()
+    try:
+        led_weather.fill(RED)
+    except Exception:
+        pass
     display.show_message(*["Binary Aviation", "RunwaySense", "Error", "Occurred", "Restart", "Unit"])

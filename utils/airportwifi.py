@@ -5,7 +5,7 @@ Aviation helpers on top of the project WiFi class.
 Imports the connection logic from wifi.py and adds:
   - generic HTTP GET
   - get_metar()
-  - get_adsb()
+  - get_https_text()
 """
 
 import gc
@@ -33,23 +33,28 @@ class AirportWiFi(WiFi):
             return None
         if headers is None:
             headers = {"User-Agent": "Mozilla/5.0 (PicoW)"}
+        resp = None
         try:
             gc.collect()
             resp = requests.get(url, headers=headers, timeout=timeout)
             code = resp.status_code
             if code == 200:
                 text = resp.text
-                resp.close()
-                gc.collect()
                 return text
             print("HTTP", code)
             if code == 429:
                 print("Rate limited – wait before next ADS-B poll")
-            resp.close()
             return None
         except Exception as e:
             print("Request failed:", type(e).__name__, e)
             return None
+        finally:
+            if resp is not None:
+                try:
+                    resp.close()
+                except Exception:
+                    pass
+            gc.collect()
 
     # ------------------------------------------------------------------
     # Aviation-specific helpers
@@ -60,10 +65,10 @@ class AirportWiFi(WiFi):
         fmt = "raw" or "json"
         """
         icao = icao.upper().strip()
-        url = f"https://aviationweather.gov/api/data/metar?ids={icao}&format={fmt}"
+        url = "https://aviationweather.gov/api/data/metar?ids={}&format={}".format(icao, fmt)
         headers = {"User-Agent": "PicoW-METAR/1.0 (aviation project)"}
         return self.get(url, headers=headers)
-    
+
     def get_https_text(self, host, path, timeout_s=20):
         import socket, ssl, gc
         gc.collect()
@@ -71,36 +76,43 @@ class AirportWiFi(WiFi):
         s = socket.socket()
         s.settimeout(timeout_s)
         s.connect(addr)
+        ss = None
+        raw = b""
         try:
-            ss = ssl.wrap_socket(s, server_hostname=host)
-        except TypeError:
-            ss = ssl.wrap_socket(s)
-        req = (
-            "GET {} HTTP/1.0\r\n"
-            "Host: {}\r\n"
-            "User-Agent: Mozilla/5.0 (PicoW Aviation)\r\n"
-            "Accept: application/json\r\n"
-            "Connection: close\r\n\r\n"
-        ).format(path, host)
-        ss.write(req.encode())
-        chunks = []
-        while True:
             try:
-                chunk = ss.read(1024)
+                ss = ssl.wrap_socket(s, server_hostname=host)
+            except TypeError:
+                ss = ssl.wrap_socket(s)
+            req = (
+                "GET {} HTTP/1.0\r\n"
+                "Host: {}\r\n"
+                "User-Agent: Mozilla/5.0 (PicoW Aviation)\r\n"
+                "Accept: application/json\r\n"
+                "Connection: close\r\n\r\n"
+            ).format(path, host)
+            ss.write(req.encode())
+            chunks = []
+            while True:
+                try:
+                    chunk = ss.read(1024)
+                except Exception:
+                    break
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            raw = b"".join(chunks)
+        finally:
+            if ss is not None:
+                try:
+                    ss.close()
+                except Exception:
+                    pass
+            try:
+                s.close()
             except Exception:
-                break
-            if not chunk:
-                break
-            chunks.append(chunk)
-        try:
-            ss.close()
-        except Exception:
-            pass
-        try:
-            s.close()
-        except Exception:
-            pass
-        raw = b"".join(chunks)
+                pass
+            gc.collect()
+
         sep = raw.find(b"\r\n\r\n")
         if sep < 0:
             print("ADS-B: bad HTTP response")
