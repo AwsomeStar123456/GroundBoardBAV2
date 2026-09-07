@@ -21,7 +21,7 @@ micropython.mem_info()
 """
 This section initalizes all global variables.
 """
-software_version = "2.0.0.5"
+software_version = "2.0.0.6"
 sync_handled = True
 ap_requested = False
 ap_exit_requested = False
@@ -48,17 +48,12 @@ display.show_message(*["Binary Aviation", "RunwaySense", "", "", "Display", "Ini
 sleep(1)
 
 #Set up Buttons
-def set_sync(_):
+def on_sync_button():
     global sync_handled
-    # Function that is scheduled when AP button is pressed.
     sync_handled = False
     print("Sync button pressed!")
 
-def on_sync_button():
-    # Schedule the function to run in the main thread.
-    micropython.schedule(set_sync, None)
-
-def switch_to_ap_mode(_):
+def on_ap_button():
     global ap_requested, ap_exit_requested, in_ap_mode
     print("AP button pressed!")
     if in_ap_mode:
@@ -66,12 +61,23 @@ def switch_to_ap_mode(_):
     else:
         ap_requested = True
 
-def on_ap_button():
-    # Schedule the function to run in the main thread.
-    micropython.schedule(switch_to_ap_mode, None)
-
 def _ap_should_exit():
+    # Portal loop is blocked on accept(); poll here so a real hold still exits.
+    try:
+        btn_ap.poll()
+    except Exception:
+        pass
     return ap_exit_requested
+
+def poll_buttons():
+    try:
+        btn_sync.poll()
+    except Exception:
+        pass
+    try:
+        btn_ap.poll()
+    except Exception:
+        pass
 
 def enter_ap_mode():
     global ap_requested, ap_exit_requested, in_ap_mode, wifi, wifi_status
@@ -139,10 +145,23 @@ def enter_ap_mode():
     display.show_message(*["Binary Aviation", "RunwaySense", "Leaving", "AP Mode", "Reconnecting", "WiFi"])
     sleep(1)
 
-btn_sync = Button(system_cfg.get("BUTTON_PIN_SYNC"), callback=on_sync_button, debounce_ms=2000)
+# Sync: short confirmed press. AP: must be held ~2s so EMI cannot open the portal.
+btn_sync = Button(
+    system_cfg.get("BUTTON_PIN_SYNC"),
+    callback=on_sync_button,
+    debounce_ms=1500,
+    hold_ms=50,
+    quiet_ms=1000,
+)
 btn_sync.enable()
 
-btn_ap = Button(system_cfg.get("BUTTON_PIN_AP"), callback=on_ap_button, debounce_ms=2000)
+btn_ap = Button(
+    system_cfg.get("BUTTON_PIN_AP"),
+    callback=on_ap_button,
+    debounce_ms=2500,
+    hold_ms=2000,
+    quiet_ms=1000,
+)
 btn_ap.enable()
 
 display.show_message(*["Binary Aviation", "RunwaySense", "", "", "Buttons", "Initialized"])
@@ -238,6 +257,13 @@ sleep(3)
 display.clear()
 sleep(1)
 
+# Hold AP during this window to enter setup at boot. A noise spike will not last 2s.
+for _ in range(40):
+    poll_buttons()
+    if ap_requested:
+        break
+    sleep(0.05)
+
 if ap_requested:
     enter_ap_mode()
 
@@ -301,6 +327,7 @@ try:
     
     while True:
         now = time.ticks_ms()
+        poll_buttons()
 
         # ----- WiFi keep-alive -----
         if wifi.is_connected() is False:
