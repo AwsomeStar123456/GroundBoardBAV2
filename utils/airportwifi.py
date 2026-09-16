@@ -2,34 +2,64 @@
 """
 Aviation helpers on top of the project WiFi class.
 
-Imports the connection logic from wifi.py and adds:
-  - generic HTTP GET
-  - get_metar()
-  - get_https_text()
+METAR is fetched over plain HTTP first (Iowa State IEM).
+aviationweather.gov HTTPS is only a fallback — TLS on Pico W
+starts failing after the board has been up a while.
 """
 
 import gc
-import time
+import socket
 
 try:
     import urequests as requests
 except ImportError:
-    import requests
+    try:
+        import requests
+    except ImportError:
+        requests = None
 
 from utils.wifi import WiFi
 
 
+def _extract_metar_line(body_text, station):
+    if not body_text:
+        return None
+    text = body_text.strip()
+    if not text:
+        return None
+    station = (station or "").upper()
+    lines = text.replace("\r", "\n").split("\n")
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        lower = line.lower()
+        if lower.startswith("station,") or lower.startswith("<"):
+            continue
+        if "," in line:
+            parts = line.split(",", 2)
+            if len(parts) >= 3 and parts[2].strip():
+                return parts[2].strip()
+        if line.startswith("METAR ") or line.startswith("SPECI "):
+            return line
+        if station and line.startswith(station):
+            return line
+        if "KT" in line and len(line) > 20:
+            return line
+    return lines[0].strip() if lines else None
+
+
 class AirportWiFi(WiFi):
     """
-    Same connection API as WiFi, plus METAR and ADS-B helpers.
+    Same connection API as WiFi, plus METAR helpers.
     """
 
-    # ------------------------------------------------------------------
-    # Generic HTTP helper
-    # ------------------------------------------------------------------
     def get(self, url, headers=None, timeout=15):
         if not self.is_connected():
             print("Not connected to WiFi")
+            return None
+        if requests is None:
+            print("urequests not available")
             return None
         if headers is None:
             headers = {"User-Agent": "Mozilla/5.0 (PicoW)"}
@@ -43,7 +73,7 @@ class AirportWiFi(WiFi):
                 return text
             print("HTTP", code)
             if code == 429:
-                print("Rate limited – wait before next ADS-B poll")
+                print("Rate limited")
             return None
         except Exception as e:
             print("Request failed:", type(e).__name__, e)
@@ -56,21 +86,92 @@ class AirportWiFi(WiFi):
                     pass
             gc.collect()
 
-    # ------------------------------------------------------------------
-    # Aviation-specific helpers
-    # ------------------------------------------------------------------
+    def get_http_text(self, host, path, timeout_s=15, max_bytes=2048):
+        s = None
+        try:
+            gc.collect()
+            addr = socket.getaddrinfo(host, 80)[0][-1]
+            print("Resolved", host, "to", addr)
+            s = socket.socket()
+            s.settimeout(timeout_s)
+            s.connect(addr)
+            req = (
+                "GET {} HTTP/1.0\r\n"
+                "Host: {}\r\n"
+                "User-Agent: GroundBoardBA\r\n"
+                "Accept: text/plain,*/*\r\n"
+                "Connection: close\r\n\r\n"
+            ).format(path, host)
+            s.send(req.encode())
+            buf = bytearray()
+            while len(buf) < max_bytes:
+                try:
+                    chunk = s.recv(256)
+                except Exception:
+                    break
+                if not chunk:
+                    break
+                buf.extend(chunk)
+            sep = buf.find(b"\r\n\r\n")
+            if sep < 0:
+                print("HTTP: bad response")
+                return None
+            header = bytes(buf[:sep]).decode("latin-1")
+            status = 0
+            try:
+                status = int(header.split("\r\n", 1)[0].split(" ")[1])
+            except Exception:
+                pass
+            if status != 200:
+                print("HTTP", status)
+                return None
+            body = bytes(buf[sep + 4 :])
+            try:
+                return body.decode("utf-8")
+            except Exception:
+                return body.decode("latin-1")
+        except Exception as e:
+            print("HTTP get failed:", e)
+            return None
+        finally:
+            if s is not None:
+                try:
+                    s.close()
+                except Exception:
+                    pass
+            gc.collect()
+
     def get_metar(self, icao, fmt="raw"):
-        """
-        Fetch the latest METAR for an airport (ICAO code).
-        fmt = "raw" or "json"
-        """
-        icao = icao.upper().strip()
+        icao = (icao or "").upper().strip()
+        if not icao:
+            return None
+
+        iem_path = (
+            "/cgi-bin/request/asos.py?station={}"
+            "&data=metar&hours=2&tz=UTC&format=onlycomma"
+            "&latlon=no&elev=no&missing=empty&trace=empty"
+            "&direct=no&report_type=3"
+        ).format(icao)
+
+        print("METAR IEM HTTP", icao)
+        body = self.get_http_text("mesonet.agron.iastate.edu", iem_path, timeout_s=15)
+        line = _extract_metar_line(body, icao) if body else None
+        if line:
+            print("METAR raw:", line)
+            return line
+
+        print("METAR IEM failed, trying aviationweather.gov")
         url = "https://aviationweather.gov/api/data/metar?ids={}&format={}".format(icao, fmt)
-        headers = {"User-Agent": "PicoW-METAR/1.0 (aviation project)"}
-        return self.get(url, headers=headers)
+        text = self.get(url, headers={"User-Agent": "PicoW-METAR/1.0 (aviation project)"})
+        if not text:
+            return None
+        line = _extract_metar_line(text, icao)
+        if line:
+            print("METAR raw:", line)
+        return line
 
     def get_https_text(self, host, path, timeout_s=20):
-        import socket, ssl, gc
+        import ssl
         gc.collect()
         addr = socket.getaddrinfo(host, 443)[0][-1]
         s = socket.socket()
@@ -115,7 +216,7 @@ class AirportWiFi(WiFi):
 
         sep = raw.find(b"\r\n\r\n")
         if sep < 0:
-            print("ADS-B: bad HTTP response")
+            print("HTTPS: bad HTTP response")
             return None
         header = raw[:sep].decode("latin-1")
         body = raw[sep + 4 :]
@@ -125,7 +226,7 @@ class AirportWiFi(WiFi):
         except Exception:
             pass
         if status != 200:
-            print("ADS-B HTTP", status)
+            print("HTTPS HTTP", status)
             return None
         try:
             return body.decode("utf-8")
