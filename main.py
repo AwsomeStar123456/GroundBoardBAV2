@@ -21,7 +21,7 @@ micropython.mem_info()
 """
 This section initalizes all global variables.
 """
-software_version = "2.0.0.7"
+software_version = "2.0.0.6"
 sync_handled = True
 ap_requested = False
 ap_exit_requested = False
@@ -329,18 +329,6 @@ try:
         now = time.ticks_ms()
         poll_buttons()
 
-        # Sync must run BEFORE the METAR check. Previously it ran at the
-        # bottom of the loop, so a press only took effect on the next pass
-        # and a failed fetch had already consumed the full interval.
-        if sync_handled is False:
-            print("Sync button — forcing METAR refresh")
-            sync_handled = True
-            last_metar = 0
-            last_display_update = 0
-            display_index = 0
-            metar_fail_count = 0
-            wifi_fault = None
-
         # ----- WiFi keep-alive -----
         if wifi.is_connected() is False:
             wifi_status = False
@@ -367,7 +355,7 @@ try:
             print(fresh)
             if fresh is not None:
                 metar = fresh
-                last_metar = time.ticks_ms()
+                last_metar = now
                 metar_fail_count = 0
                 wifi_status = True
                 wifi_backoff_s = 5
@@ -376,19 +364,12 @@ try:
                 if DISPLAY_MODE == "Static":
                     setDisplay(display, metar, led_weather, crosswind_limit=system_cfg.get("WEATHER_LED_CROSSWIND_LIMIT", 5))
                 if DISPLAY_MODE == "Cycle":
+                    last_display_update = now
                     display_index = 0
-                    display_index = setDisplayPage(display, metar, led_weather, system_cfg.get("WEATHER_LED_CROSSWIND_LIMIT", 5),system_cfg.get("METAR_STATION_ID"),display_index)
-                    last_display_update = time.ticks_ms()
             else:
                 metar_fail_count += 1
                 print("METAR fetch failed ({}/{})".format(metar_fail_count, METAR_FAILS_BEFORE_RECONNECT))
                 # Keep last good METAR on the display. Only go blue if we have none.
-                # Do NOT burn the full METAR_INTERVAL on a failed attempt — that is
-                # why the board looked frozen until Sync (which zeros last_metar).
-                retry_s = 45
-                if METAR_INTERVAL_S and METAR_INTERVAL_S < retry_s:
-                    retry_s = METAR_INTERVAL_S
-                last_metar = time.ticks_ms() - (METAR_INTERVAL_S - retry_s) * 1000
                 if metar is None:
                     show_wifi_fault(
                         "metar",
@@ -397,11 +378,14 @@ try:
                         "Attempt {}".format(metar_fail_count),
                         "Retrying",
                     )
+                    retry_s = 30 if METAR_INTERVAL_S > 30 else METAR_INTERVAL_S
+                    last_metar = now - (METAR_INTERVAL_S - retry_s) * 1000
+                else:
+                    last_metar = now
                 if metar_fail_count >= METAR_FAILS_BEFORE_RECONNECT:
                     print("METAR failed repeatedly — forcing WiFi reconnect")
                     metar_fail_count = 0
                     wifi_status = False
-                    last_metar = 0
                     try:
                         wifi.disconnect()
                     except Exception:
@@ -413,6 +397,16 @@ try:
             print("Changing display data current index: " + str(display_index))
             display_index = setDisplayPage(display, metar, led_weather, system_cfg.get("WEATHER_LED_CROSSWIND_LIMIT", 5),system_cfg.get("METAR_STATION_ID"),display_index)
             last_display_update = now
+
+        # ----- Button / sync handling -----
+        if sync_handled is False:
+            print("Skipping due to sync press")
+            sync_handled = True
+            last_metar = 0
+            last_display_update = 0
+            display_index = 0
+            metar_fail_count = 0
+            wifi_fault = None
 
         if ap_requested:
             enter_ap_mode()
