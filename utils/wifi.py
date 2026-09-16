@@ -181,7 +181,6 @@ class WiFi:
 
         ip = self.get_ip()
         print("Connected, IP:", ip)
-        self._ensure_dns()
 
         ntp_ok = self._sync_time()
 
@@ -198,24 +197,6 @@ class WiFi:
             print("NTP sync skipped/failed — WiFi still considered connected")
 
         return True
-
-    def _ensure_dns(self):
-        """
-        Pico W often gets a lease with no usable DNS. OSError -2 from NTP
-        and urequests is getaddrinfo failing. Pin a public resolver while
-        keeping the DHCP address and gateway.
-        """
-        try:
-            ip, mask, gw, dns = self.wlan.ifconfig()
-            print("ifconfig ip={} mask={} gw={} dns={}".format(ip, mask, gw, dns))
-            if not ip:
-                return
-            if dns not in ("8.8.8.8", "1.1.1.1"):
-                print("Setting DNS 8.8.8.8 (DHCP gave {})".format(dns))
-                self.wlan.ifconfig((ip, mask, gw, "8.8.8.8"))
-                print("ifconfig now", self.wlan.ifconfig())
-        except Exception as e:
-            print("DNS setup failed:", e)
 
     def _sync_time(self):
         """Best-effort NTP. Never used as a connectivity gate."""
